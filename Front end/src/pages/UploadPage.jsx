@@ -1,0 +1,99 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+function UploadPage() {
+  const [resume, setResume] = useState(null);
+  const [jobDescription, setJobDescription] = useState("");
+  const navigate = useNavigate();
+
+  const handleAnalyze = async () => {
+    if (!resume || !jobDescription) {
+      alert("Please upload resume and enter job description");
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("resume", resume);
+      formData.append("jobDescription", jobDescription);
+
+      const response = await fetch("http://localhost:5000/analyze", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+
+      // 🔥 DEBUG (VERY IMPORTANT)
+      console.log("BACKEND RESPONSE:", data);
+
+      // ❌ if backend fails
+      if (!data || data.error) {
+        alert("AI failed or backend returned empty response");
+        return;
+      }
+
+      // ✅ save AI result
+      localStorage.setItem("aiResult", JSON.stringify(data));
+
+      // go to next page
+      navigate("/skills");
+
+    } catch (error) {
+      console.log("UPLOAD ERROR:", error);
+      alert("Backend not responding");
+    }
+  };
+
+  return (
+    <div className="container">
+
+      <h1>AI RESUME ANALYZER</h1>
+
+      <p className="subtitle">
+        Upload your resume and job description
+      </p>
+
+      {/* FILE UPLOAD */}
+      <label className="upload-box">
+
+        <input
+          type="file"
+          hidden
+          onChange={(e) => setResume(e.target.files[0])}
+        />
+
+        <div className="upload-content">
+
+          <h2>📄 CHOOSE RESUME</h2>
+
+          <p>Click to upload your file</p>
+
+          <span>PDF • DOC • DOCX</span>
+
+          {resume && (
+            <div className="file-name">
+              ✅ {resume.name}
+            </div>
+          )}
+
+        </div>
+      </label>
+
+      {/* JOB DESCRIPTION */}
+      <textarea
+        placeholder="Paste Job Description Here..."
+        value={jobDescription}
+        onChange={(e) => setJobDescription(e.target.value)}
+      />
+
+      {/* BUTTON */}
+      <button onClick={handleAnalyze}>
+        🚀 Analyze Resume
+      </button>
+
+    </div>
+  );
+}
+
+export default UploadPage;
