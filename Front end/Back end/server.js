@@ -8,12 +8,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// multer setup
+// Multer setup (store file in memory)
 const upload = multer({
   storage: multer.memoryStorage()
 });
 
-// skills database
+// Skills database
 const SKILLS_DB = [
   "python",
   "react",
@@ -26,7 +26,7 @@ const SKILLS_DB = [
   "machine learning"
 ];
 
-// test route
+// Test route
 app.get("/", (req, res) => {
   res.send("Backend running 🚀");
 });
@@ -34,57 +34,74 @@ app.get("/", (req, res) => {
 // MAIN AI ROUTE
 app.post("/analyze", upload.single("resume"), async (req, res) => {
   try {
-
-    // 🔥 DEBUG START
     console.log("🔥 REQUEST HIT");
     console.log("FILE RECEIVED:", req.file);
+    console.log("JOB DESCRIPTION:", req.body.jobDescription);
 
-    // check file
+    // Check file
     if (!req.file) {
-      return res.json({
-        error: "No file received from frontend"
-      });
+      return res.status(400).json({ error: "No file received from frontend" });
     }
 
-    // parse PDF
-    const data = await pdfParse(req.file.buffer);
+    // Only allow PDFs
+    if (req.file.mimetype !== "application/pdf") {
+      return res.status(400).json({ error: "Only PDF files are supported" });
+    }
+
+    // Parse PDF
+    let data;
+    try {
+      data = await pdfParse(req.file.buffer);
+    } catch (parseErr) {
+      console.log("❌ PDF PARSE ERROR:", parseErr.message);
+      return res.status(400).json({ error: "Failed to parse PDF file: " + parseErr.message });
+    }
+
     const resumeText = (data.text || "").toLowerCase();
 
     console.log("📄 RESUME LENGTH:", resumeText.length);
 
     if (resumeText.length < 10) {
-      return res.json({
-        error: "PDF not readable (maybe scanned image)"
-      });
+      return res.status(400).json({ error: "PDF not readable (maybe scanned image)" });
     }
 
-    // find skills
-    const found = SKILLS_DB.filter(s => resumeText.includes(s));
-    const missing = SKILLS_DB.filter(s => !resumeText.includes(s));
-
-    const score = Math.round((found.length / SKILLS_DB.length) * 100);
-
-    const questions = missing.slice(0, 4).map(s =>
-      `Explain your experience with ${s}?`
+    // Find skills
+    const found = SKILLS_DB.filter(skill =>
+      resumeText.includes(skill)
     );
 
+    const missing = SKILLS_DB.filter(skill =>
+      !resumeText.includes(skill)
+    );
+
+    const score = Math.round(
+      (found.length / SKILLS_DB.length) * 100
+    );
+
+    const questions = missing.slice(0, 4).map(skill =>
+      `Explain your experience with ${skill}?`
+    );
+
+    // Send response
     return res.json({
       score,
       found,
       missing,
-      questions
+      questions,
+      jobDescription: req.body.jobDescription || ""
     });
 
   } catch (err) {
-    console.log("❌ ERROR:", err);
+    console.log("❌ FULL ERROR:");
+    console.log(err);
 
-    return res.json({
-      error: "Backend crashed"
+    return res.status(500).json({
+      error: err.message
     });
   }
 });
 
-// start server
+// Start server
 app.listen(5000, () => {
   console.log("🚀 AI Server running on http://localhost:5000");
 });
