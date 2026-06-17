@@ -19,29 +19,36 @@ function UploadPage() {
     }
 
     try {
-      const formData = new FormData();
-      formData.append("resume", resume);
-      formData.append("jobDescription", jobDescription);
+      // Convert file to base64
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64Resume = e.target.result.split(',')[1];
 
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
-      const response = await fetch(`${apiUrl}/analyze`, {
-        method: "POST",
-        body: formData
-      });
+        const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+        const response = await fetch(`${apiUrl}/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resume: base64Resume,
+            jobDescription: jobDescription
+          })
+        });
 
-      const data = await response.json();
-      console.log("BACKEND RESPONSE:", data);
+        const data = await response.json();
+        console.log("BACKEND RESPONSE:", data);
 
-      if (!data || data.error) {
-        alert(`Backend error: ${data.error || "Empty response"}`);
-        return;
-      }
+        if (!data || data.error) {
+          alert(`Backend error: ${data.error || "Empty response"}`);
+          return;
+        }
 
-      // ✅ Save AI result locally
-      localStorage.setItem("aiResult", JSON.stringify(data));
+        // ✅ Save AI result locally
+        localStorage.setItem("aiResult", JSON.stringify(data.analysis || data));
 
-      // Navigate to skills page
-      navigate("/skills");
+        // Navigate to skills page
+        navigate("/skills");
+      };
+      reader.readAsDataURL(resume);
 
     } catch (error) {
       console.error("UPLOAD ERROR:", error);
