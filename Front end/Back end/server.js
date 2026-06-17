@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
+const { PDFParse } = require("pdf-parse");
+const { createWorker } = require('tesseract.js');
 const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -88,6 +90,41 @@ async function extractTextFromPDFWithSystem(buffer) {
   });
 }
 
+// Primary PDF extraction using pdf-parse v2
+async function extractTextFromPDF(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return result?.text || "";
+  } finally {
+    try {
+      await parser.destroy();
+    } catch (destroyErr) {
+      console.log("⚠️  PDFParse destroy failed:", destroyErr?.message || destroyErr);
+    }
+  }
+}
+
+// OCR fallback using Tesseract.js (renders first page with pdf-parse then runs OCR)
+async function extractTextWithOCR(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const shot = await parser.getScreenshot({ first: 1 });
+    const imageBuffer = shot && shot.pages && shot.pages[0] && shot.pages[0].data ? shot.pages[0].data : null;
+    if (!imageBuffer) throw new Error('Could not render page for OCR');
+
+    const worker = await createWorker();
+    await worker.load();
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
+    const { data: { text } } = await worker.recognize(imageBuffer);
+    await worker.terminate();
+    return text || '';
+  } finally {
+    try { await parser.destroy(); } catch (e) { /* ignore */ }
+  }
+}
+
 // Fallback: Simple PDF text extraction (works for basic PDFs)
 function extractTextFromPDFBasic(buffer) {
   try {
@@ -141,23 +178,41 @@ app.post("/analyze", upload.single("resume"), async (req, res) => {
     // Parse PDF
     console.log("📄 Parsing PDF...");
     let resumeText = "";
-    
+    let parseError = null;
+
     try {
-      // Try system command first (pdftotext)
+      resumeText = await extractTextFromPDF(req.file.buffer);
+      if (!resumeText || resumeText.length < 5) {
+        throw new Error("pdf-parse returned no text");
+      }
+      console.log("✅ Extracted using pdf-parse");
+    } catch (pdfParseErr) {
+      parseError = pdfParseErr;
+      console.log("⚠️  pdf-parse failed:", pdfParseErr.message);
       try {
         resumeText = await extractTextFromPDFWithSystem(req.file.buffer);
-        console.log("✅ Extracted using pdftotext");
-      } catch (sysErr) {
-        console.log("⚠️  pdftotext failed, trying basic extraction");
-        // Fallback to basic extraction
-        resumeText = extractTextFromPDFBasic(req.file.buffer);
         if (!resumeText || resumeText.length < 5) {
-          throw new Error("Could not extract text from PDF. Try a different PDF file.");
+          throw new Error("pdftotext returned no text");
+        }
+        console.log("✅ Extracted using pdftotext fallback");
+      } catch (sysErr) {
+        console.log("⚠️  pdftotext failed, trying basic extraction:", sysErr.message);
+        // Try basic extraction
+        resumeText = extractTextFromPDFBasic(req.file.buffer);
+        if (!resumeText || resumeText.length < 5 || resumeText === "Unable to extract text") {
+          // Try OCR as a final fallback (useful for scanned PDFs)
+          try {
+            console.log('🔎 Trying OCR fallback...');
+            resumeText = await extractTextWithOCR(req.file.buffer);
+            if (!resumeText || resumeText.length < 5) throw new Error('OCR returned no text');
+            console.log('✅ Extracted using OCR fallback');
+          } catch (ocrErr) {
+            const message = pdfParseErr?.message || sysErr?.message || ocrErr?.message || "Could not extract text from PDF.";
+            console.log("❌ PDF PARSE ERROR:", message);
+            return res.status(400).json({ error: "Cannot parse PDF: " + message });
+          }
         }
       }
-    } catch (parseErr) {
-      console.log("❌ PDF PARSE ERROR:", parseErr.message);
-      return res.status(400).json({ error: "Cannot parse PDF: " + parseErr.message });
     }
 
     resumeText = (resumeText || "").toLowerCase().trim();
@@ -237,8 +292,9 @@ app.use((err, req, res, next) => {
 });
 
 // Start server with error handling
-const server = app.listen(5000, () => {
-  console.log("🚀 AI Server running on http://localhost:5000");
+const PORT = process.env.PORT || 5000;
+const server = app.listen(PORT, () => {
+  console.log(`🚀 AI Server running on http://localhost:${PORT}`);
   console.log("✅ CORS enabled for all origins");
   console.log("✅ PDF extraction ready");
   console.log("✅ Ready to receive resume uploads\n");
